@@ -506,11 +506,15 @@ async function startDraftBoard() {
   if (!realtimeChannel) {
     realtimeChannel = supabase.channel(`public:draft_picks:draft_id=eq.${currentDraft.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dd_draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
-        if (!pickLog.find(p => p.id === payload.new.id)) {
+        // Match by pick_number to handle optimistic temp picks
+        const existingIdx = pickLog.findIndex(p => p.pick_number === payload.new.pick_number)
+        if (existingIdx !== -1) {
+          pickLog[existingIdx] = payload.new // replace temp with real
+        } else {
           pickLog.push(payload.new)
-          pickLog.sort((a, b) => a.pick_number - b.pick_number)
-          updateBoard()
         }
+        pickLog.sort((a, b) => a.pick_number - b.pick_number)
+        updateBoard()
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'dd_draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
         pickLog = pickLog.filter(p => p.id !== payload.old.id)
