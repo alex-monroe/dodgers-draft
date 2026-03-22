@@ -495,6 +495,22 @@ async function startDraftBoard() {
   showPhase('draft')
   btnBack3.classList.toggle('hidden', !isAdmin)
 
+  // Admin "Play As" selector
+  const adminControls = document.getElementById('admin-controls')
+  const adminPlayAs = document.getElementById('admin-play-as')
+  if (isAdmin) {
+    adminControls.classList.remove('hidden')
+    const uniqueNames = [...new Set(participants.map(p => p.display_name))]
+    adminPlayAs.innerHTML = '<option value="">None</option>' +
+      uniqueNames.map(name => `<option value="${name}" ${name === claimedName ? 'selected' : ''}>${name}</option>`).join('')
+    adminPlayAs.onchange = () => {
+      claimedName = adminPlayAs.value || null
+      updateBoard()
+    }
+  } else {
+    adminControls.classList.add('hidden')
+  }
+
   // Populate month filter
   const months = [...new Set(games.map(g => new Date(g.game_date).toLocaleString('default', { month: 'long' })))]
   filterMonth.innerHTML = '<option value="">All Months</option>' + months.map(m => `<option value="${m}">${m}</option>`).join('')
@@ -560,14 +576,19 @@ function renderGames() {
     return oppMtch && mMtch
   })
 
+  // Check if it's this user's turn
+  const currentPicker = getPickerAtOverall(pickLog.length + 1)
+  const canPick = isAdmin || (currentPicker?.display_name === claimedName)
+
   gameListEl.innerHTML = filtered.map(g => {
     const dt = new Date(g.game_date)
     const formatDt = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })
     const picksCount = getGamePickStats(g.id)
-    
+
     let stateClass = ''
     if (picksCount === 1) stateClass = 'taken-1'
     if (picksCount >= 2) stateClass = 'taken-2'
+    if (!canPick && picksCount < 2) stateClass += ' not-my-turn'
 
     return `
       <div class="game-item ${stateClass}" onclick="makePick('${g.id}')">
@@ -603,9 +624,9 @@ function renderPickBanner() {
   pickDrafter.textContent = picker ? picker.display_name : 'Unknown'
   
   if (document.getElementById('pick-instruction')) {
-    const isMyTurn = isAdmin
-      ? (picker?.user_id === currentUser?.id)
-      : (picker?.display_name === claimedName)
+    const isMyTurn = claimedName
+      ? (picker?.display_name === claimedName)
+      : false
     document.getElementById('pick-instruction').textContent =
       isMyTurn ? 'It is your turn! Select a game.' : "Select a game from the left panel when it's your turn"
   }
@@ -671,6 +692,7 @@ function renderDraftLog() {
         <div class="log-num">#${log.pick_number}</div>
         <div class="log-name ${colorClass}" style="color:var(--pcolor)">${picker.display_name}</div>
         <div class="log-game">vs ${game.opponent} <span style="font-size:0.8em;opacity:0.6">(${formatDt})</span></div>
+        ${isAdmin ? `<button class="log-delete" onclick="event.stopPropagation(); deletePick('${log.id}')" title="Remove pick">✕</button>` : ''}
       </div>
     `
   }).reverse().join('')
@@ -709,6 +731,9 @@ window.makePick = async (gameId) => {
   const overallPickNum = pickLog.length + 1
   const picker = getPickerAtOverall(overallPickNum)
 
+  // Only the current picker (or admin) can make a pick
+  if (!isAdmin && picker?.display_name !== claimedName) return
+
   pickInFlight = true
   const { data, error } = await supabase.from('dd_draft_picks').insert({
     draft_id: currentDraft.id,
@@ -731,19 +756,53 @@ window.makePick = async (gameId) => {
   }
 }
 
-// Undo (admin only)
+// Delete a specific pick (admin only)
+window.deletePick = async (pickId) => {
+  if (!isAdmin) return
+  pickLog = pickLog.filter(p => p.id !== pickId)
+  updateBoard()
+
+  const { error } = await supabase.from('dd_draft_picks').delete().eq('id', pickId)
+  if (error) alert('Failed to delete pick: ' + error.message)
+
+  // Re-number remaining picks to fill gaps
+  await renumberPicks()
+}
+
+async function renumberPicks() {
+  // Re-fetch picks in order and renumber them sequentially
+  const { data } = await supabase.from('dd_draft_picks')
+    .select('*')
+    .eq('draft_id', currentDraft.id)
+    .order('pick_number', { ascending: true })
+
+  if (!data) return
+
+  for (let i = 0; i < data.length; i++) {
+    if (data[i].pick_number !== i + 1) {
+      await supabase.from('dd_draft_picks')
+        .update({ pick_number: i + 1 })
+        .eq('id', data[i].id)
+    }
+  }
+
+  // Re-fetch clean state
+  const { data: fresh } = await supabase.from('dd_draft_picks')
+    .select('*')
+    .eq('draft_id', currentDraft.id)
+    .order('pick_number', { ascending: true })
+  pickLog = fresh || []
+  updateBoard()
+}
+
+// Undo last pick (admin only, Cmd+Z)
 document.addEventListener('keydown', async (e) => {
   if (!isAdmin) return
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
     e.preventDefault()
     if (pickLog.length === 0) return
     const lastPick = pickLog.reduce((max, p) => p.pick_number > max.pick_number ? p : max, pickLog[0])
-    
-    // Optimistic remove
-    pickLog = pickLog.filter(p => p.id !== lastPick.id)
-    updateBoard()
-
-    await supabase.from('dd_draft_picks').delete().eq('id', lastPick.id)
+    deletePick(lastPick.id)
   }
 })
 
