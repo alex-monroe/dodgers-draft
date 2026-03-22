@@ -888,6 +888,57 @@ body {
   justify-content: center;
 }
 
+/* ── Admin Controls ──────────────────────────────────── */
+.admin-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.admin-select {
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 0.82rem;
+}
+
+.admin-select:focus {
+  outline: none;
+  border-color: var(--dodger-light);
+}
+
+.log-entry {
+  position: relative;
+}
+
+.log-delete {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.75rem;
+  padding: 2px 6px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity var(--transition), color var(--transition);
+}
+
+.log-entry:hover .log-delete {
+  opacity: 1;
+}
+
+.log-delete:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
+}
+
 /* ── Claim Grid (visitor name selection) ─────────────── */
 .claim-grid {
   display: grid;
