@@ -26,12 +26,31 @@
   </header>
 
   <main id="app-main">
-    <!-- ═══════ Phase 0: Auth ═══════ -->
-    <section id="phase-auth" class="phase active">
+    <!-- ═══════ No Active Draft (visitor landing) ═══════ -->
+    <section id="phase-no-draft" class="phase">
       <div class="phase-card auth-card">
-        <h2>Welcome to the Draft</h2>
-        <p class="subtitle">Sign in to join a draft or create a new one.</p>
-        
+        <h2>No Active Draft</h2>
+        <p class="subtitle">There's no draft happening right now. Check back later!</p>
+        <button id="btn-admin-login" class="btn btn-ghost btn-sm" style="margin-top:12px">Admin Login</button>
+      </div>
+    </section>
+
+    <!-- ═══════ Claim Screen (visitor picks their name) ═══════ -->
+    <section id="phase-claim" class="phase">
+      <div class="phase-card" style="max-width:600px">
+        <h2>Who Are You?</h2>
+        <p class="subtitle">Select your name to join the draft board.</p>
+        <div class="claim-grid" id="claim-grid"></div>
+        <button id="btn-admin-login-2" class="btn btn-ghost btn-sm" style="margin-top:16px">Admin Login</button>
+      </div>
+    </section>
+
+    <!-- ═══════ Phase 0: Auth (admin only) ═══════ -->
+    <section id="phase-auth" class="phase">
+      <div class="phase-card auth-card">
+        <h2>Admin Login</h2>
+        <p class="subtitle">Sign in to manage drafts.</p>
+
         <form id="auth-form">
           <div class="form-group">
             <label for="auth-email">Email Address</label>
@@ -41,15 +60,12 @@
             <label for="auth-password">Password</label>
             <input type="password" id="auth-password" required placeholder="••••••••" />
           </div>
-          <div class="form-group" id="name-group">
-            <label for="auth-name">Display Name (for new accounts)</label>
-            <input type="text" id="auth-name" placeholder="E.g. Alex" />
-          </div>
-          
+
           <div id="auth-error" class="status-msg error hidden"></div>
-          
-          <button type="submit" id="btn-login" class="btn btn-primary btn-wide">Sign In / Sign Up</button>
+
+          <button type="submit" id="btn-login" class="btn btn-primary btn-wide">Sign In</button>
         </form>
+        <button id="btn-back-to-visitor" class="btn btn-ghost btn-sm" style="margin-top:12px">Back</button>
       </div>
     </section>
 
