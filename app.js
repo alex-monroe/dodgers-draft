@@ -76,10 +76,10 @@ async function init() {
   document.getElementById('btn-admin-login-2')?.addEventListener('click', () => showPhase('auth'))
   document.getElementById('btn-back-to-visitor')?.addEventListener('click', () => loadVisitorView())
 
-  // Listen for auth state changes
+  // Listen for auth state changes (only navigate on actual sign-in/sign-out)
   supabase.auth.onAuthStateChange((event, session) => {
-    if (event === 'INITIAL_SESSION') return // handled below
-    if (session) {
+    if (event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') return
+    if (event === 'SIGNED_IN') {
       currentUser = session.user
       isAdmin = true
       headerUser.classList.remove('hidden')
@@ -87,7 +87,7 @@ async function init() {
       btnLogout.textContent = 'Sign Out'
       showPhase('lobby')
       loadLobby()
-    } else {
+    } else if (event === 'SIGNED_OUT') {
       currentUser = null
       isAdmin = false
       headerUser.classList.add('hidden')
