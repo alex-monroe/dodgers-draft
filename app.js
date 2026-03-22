@@ -576,14 +576,19 @@ function renderGames() {
     return oppMtch && mMtch
   })
 
+  // Check if it's this user's turn
+  const currentPicker = getPickerAtOverall(pickLog.length + 1)
+  const canPick = isAdmin || (currentPicker?.display_name === claimedName)
+
   gameListEl.innerHTML = filtered.map(g => {
     const dt = new Date(g.game_date)
     const formatDt = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })
     const picksCount = getGamePickStats(g.id)
-    
+
     let stateClass = ''
     if (picksCount === 1) stateClass = 'taken-1'
     if (picksCount >= 2) stateClass = 'taken-2'
+    if (!canPick && picksCount < 2) stateClass += ' not-my-turn'
 
     return `
       <div class="game-item ${stateClass}" onclick="makePick('${g.id}')">
@@ -725,6 +730,9 @@ window.makePick = async (gameId) => {
 
   const overallPickNum = pickLog.length + 1
   const picker = getPickerAtOverall(overallPickNum)
+
+  // Only the current picker (or admin) can make a pick
+  if (!isAdmin && picker?.display_name !== claimedName) return
 
   pickInFlight = true
   const { data, error } = await supabase.from('dd_draft_picks').insert({
