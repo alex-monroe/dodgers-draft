@@ -51,14 +51,14 @@
         <h2>Admin Login</h2>
         <p class="subtitle">Sign in to manage drafts.</p>
 
-        <form id="auth-form">
+        <form id="auth-form" autocomplete="off">
           <div class="form-group">
             <label for="auth-email">Email Address</label>
-            <input type="email" id="auth-email" required placeholder="you@example.com" />
+            <input type="email" id="auth-email" required placeholder="you@example.com" autocomplete="off" />
           </div>
           <div class="form-group">
             <label for="auth-password">Password</label>
-            <input type="password" id="auth-password" required placeholder="••••••••" />
+            <input type="password" id="auth-password" required placeholder="••••••••" autocomplete="off" />
           </div>
 
           <div id="auth-error" class="status-msg error hidden"></div>
