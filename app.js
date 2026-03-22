@@ -506,15 +506,11 @@ async function startDraftBoard() {
   if (!realtimeChannel) {
     realtimeChannel = supabase.channel(`public:draft_picks:draft_id=eq.${currentDraft.id}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dd_draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
-        // Match by pick_number to handle optimistic temp picks
-        const existingIdx = pickLog.findIndex(p => p.pick_number === payload.new.pick_number)
-        if (existingIdx !== -1) {
-          pickLog[existingIdx] = payload.new // replace temp with real
-        } else {
+        if (!pickLog.find(p => p.id === payload.new.id)) {
           pickLog.push(payload.new)
+          pickLog.sort((a, b) => a.pick_number - b.pick_number)
+          updateBoard()
         }
-        pickLog.sort((a, b) => a.pick_number - b.pick_number)
-        updateBoard()
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'dd_draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
         pickLog = pickLog.filter(p => p.id !== payload.old.id)
@@ -708,23 +704,10 @@ let pickInFlight = false
 window.makePick = async (gameId) => {
   if (pickInFlight) return
   if (isDraftOver()) return
-  const picksCount = getGamePickStats(gameId)
-  if (picksCount >= 2) return // Full slots
+  if (getGamePickStats(gameId) >= 2) return
 
   const overallPickNum = pickLog.length + 1
   const picker = getPickerAtOverall(overallPickNum)
-
-  // Optimistic UI update
-  const tempId = 'temp-' + Date.now()
-  const newPick = {
-    id: tempId,
-    draft_id: currentDraft.id,
-    participant_id: picker.id,
-    game_id: gameId,
-    pick_number: overallPickNum
-  }
-  pickLog.push(newPick)
-  updateBoard()
 
   pickInFlight = true
   const { data, error } = await supabase.from('dd_draft_picks').insert({
@@ -737,12 +720,14 @@ window.makePick = async (gameId) => {
 
   if (error) {
     alert('Pick failed: ' + error.message)
-    pickLog = pickLog.filter(p => p.id !== tempId)
+    return
+  }
+
+  // Add from response if realtime hasn't already
+  if (!pickLog.find(p => p.id === data.id)) {
+    pickLog.push(data)
+    pickLog.sort((a, b) => a.pick_number - b.pick_number)
     updateBoard()
-  } else {
-    // Replace temp pick with real one so realtime doesn't duplicate it
-    const idx = pickLog.findIndex(p => p.id === tempId)
-    if (idx !== -1) pickLog[idx] = data
   }
 }
 
