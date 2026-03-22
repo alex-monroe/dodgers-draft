@@ -1,0 +1,645 @@
+import { supabase } from './supabase.js'
+
+// ─── STATE ────────────────────────────────────────────────────────
+let currentUser = null
+let currentDraft = null
+let participants = [] // Array of { id, pick_order, display_name, user_id }
+let games = []        // Array of { id, game_date, opponent, ... }
+let pickLog = []      // Array of { id, pick_number, participant_id, game_id }
+let realtimeChannel = null
+
+// ─── DOM ELEMENTS ──────────────────────────────────────────────────
+const phases = {
+  auth: document.getElementById('phase-auth'),
+  lobby: document.getElementById('phase-lobby'),
+  schedule: document.getElementById('phase-schedule'),
+  participants: document.getElementById('phase-participants'),
+  draft: document.getElementById('phase-draft')
+}
+
+// Header
+const headerUser = document.getElementById('header-user')
+const userDisplayName = document.getElementById('user-display-name')
+const btnLogout = document.getElementById('btn-logout')
+const stepperWrap = document.getElementById('stepper-wrap')
+
+// Auth
+const authForm = document.getElementById('auth-form')
+const authEmail = document.getElementById('auth-email')
+const authPassword = document.getElementById('auth-password')
+const authName = document.getElementById('auth-name')
+const authError = document.getElementById('auth-error')
+
+// Lobby
+const lobbyDraftsList = document.getElementById('lobby-drafts-list')
+const btnCreateDraft = document.getElementById('btn-create-draft')
+const newDraftName = document.getElementById('new-draft-name')
+const newDraftYear = document.getElementById('new-draft-year')
+
+// Schedule
+const btnFetch = document.getElementById('btn-fetch')
+const scheduleStatus = document.getElementById('schedule-status')
+const scheduleBody = document.getElementById('schedule-body')
+const gameCountEl = document.getElementById('game-count')
+const btnNext1 = document.getElementById('btn-next-1')
+
+// Participants
+const participantGrid = document.getElementById('participant-grid')
+const btnRandomize = document.getElementById('btn-randomize')
+const btnSaveParticipants = document.getElementById('btn-save-participants')
+const btnBack2 = document.getElementById('btn-back-2')
+const snakePreview = document.getElementById('snake-preview')
+const snakeVisual = document.getElementById('snake-visual')
+
+// Draft Board
+const gameListEl = document.getElementById('game-list')
+const filterMonth = document.getElementById('filter-month')
+const filterOpp = document.getElementById('filter-opp')
+const pickRoundNum = document.getElementById('pick-round-num')
+const pickOverallNum = document.getElementById('pick-overall-num')
+const pickDrafter = document.getElementById('pick-drafter')
+const pickInstruction = document.getElementById('pick-instruction')
+const draftLog = document.getElementById('draft-log')
+const orderList = document.getElementById('order-list')
+const resultsSection = document.getElementById('results-section')
+const resultsBody = document.getElementById('results-body')
+const btnBack3 = document.getElementById('btn-back-3')
+
+
+// ─── INITIALIZATION ────────────────────────────────────────────────
+async function init() {
+  // Listen for auth state changes
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (session) {
+      currentUser = session.user
+      headerUser.classList.remove('hidden')
+      userDisplayName.textContent = currentUser.user_metadata?.display_name || currentUser.email
+      showPhase('lobby')
+      loadLobby()
+    } else {
+      currentUser = null
+      headerUser.classList.add('hidden')
+      showPhase('auth')
+    }
+  })
+
+  // Check initial session
+  const { data: { session } } = await supabase.auth.getSession()
+  if (!session) showPhase('auth')
+}
+
+function showPhase(phaseId) {
+  Object.values(phases).forEach(el => el.classList.remove('active'))
+  if (phases[phaseId]) phases[phaseId].classList.add('active')
+  
+  if (phaseId === 'auth' || phaseId === 'lobby') {
+    stepperWrap.classList.add('hidden')
+  } else {
+    stepperWrap.classList.remove('hidden')
+    updateStepper(phaseId)
+  }
+}
+
+function updateStepper(phaseId) {
+  document.querySelectorAll('.step').forEach(el => {
+    el.classList.remove('active', 'done')
+    const step = parseInt(el.dataset.step)
+    const current = phaseId === 'schedule' ? 1 : phaseId === 'participants' ? 2 : 3
+    if (step < current) el.classList.add('done')
+    if (step === current) el.classList.add('active')
+  })
+}
+
+// ─── AUTHENTICATION ────────────────────────────────────────────────
+authForm.addEventListener('submit', async (e) => {
+  e.preventDefault()
+  authError.classList.add('hidden')
+  const email = authEmail.value.trim()
+  const password = authPassword.value
+  const name = authName.value.trim()
+
+  // Try signing in first
+  let { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  
+  // If invalid credentials, try signing up
+  if (error && error.message.includes('Invalid login')) {
+    const signupData = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: { display_name: name || email.split('@')[0] } }
+    })
+    error = signupData.error
+  }
+
+  if (error) {
+    authError.textContent = error.message
+    authError.classList.remove('hidden')
+  }
+})
+
+btnLogout.addEventListener('click', () => {
+  if (realtimeChannel) realtimeChannel.unsubscribe()
+  supabase.auth.signOut()
+})
+
+
+// ─── LOBBY ─────────────────────────────────────────────────────────
+async function loadLobby() {
+  lobbyDraftsList.innerHTML = '<div class="status-msg loading">Loading drafts...</div>'
+  const { data, error } = await supabase.from('drafts').select(`id, name, season_year, status, owner_id, users(display_name)`).order('created_at', { ascending: false })
+  
+  if (error) {
+    lobbyDraftsList.innerHTML = `<div class="status-msg error">Error: ${error.message}</div>`
+    return
+  }
+  
+  if (data.length === 0) {
+    lobbyDraftsList.innerHTML = '<div class="status-msg">No active drafts found. Create one to begin.</div>'
+    return
+  }
+
+  lobbyDraftsList.innerHTML = data.map(d => `
+    <div class="lobby-item" onclick="joinDraft('${d.id}')">
+      <div>
+        <div class="lobby-item-title">${d.name} (${d.season_year})</div>
+        <div class="lobby-item-meta">Status: ${d.status.toUpperCase()} &middot; Host: ${d.users?.display_name || 'Unknown'}</div>
+      </div>
+      <button class="btn btn-ghost btn-sm">Join →</button>
+    </div>
+  `).join('')
+}
+
+btnCreateDraft.addEventListener('click', async () => {
+  const name = newDraftName.value.trim() || 'New Draft'
+  const year = parseInt(newDraftYear.value) || new Date().getFullYear()
+  
+  const { data, error } = await supabase.from('drafts').insert([{
+    name, season_year: year, owner_id: currentUser.id, status: 'setup'
+  }]).select().single()
+
+  if (error) alert('Error creating draft: ' + error.message)
+  else joinDraft(data.id)
+})
+
+window.joinDraft = async (draftId) => {
+  if (realtimeChannel) {
+    await realtimeChannel.unsubscribe()
+    realtimeChannel = null
+  }
+
+  const { data: d } = await supabase.from('drafts').select('*').eq('id', draftId).single()
+  currentDraft = d
+
+  // Fetch games & participants & picks
+  const [gRes, pRes, picksRes] = await Promise.all([
+    supabase.from('draft_games').select('*').eq('draft_id', draftId).order('game_date', { ascending: true }),
+    supabase.from('draft_participants').select('*').eq('draft_id', draftId).order('pick_order', { ascending: true }),
+    supabase.from('draft_picks').select('*').eq('draft_id', draftId).order('pick_number', { ascending: true })
+  ])
+
+  games = gRes.data || []
+  participants = pRes.data || []
+  pickLog = picksRes.data || []
+
+  // Route to correct phase based on status
+  if (currentDraft.status === 'setup' && games.length === 0) {
+    showPhase('schedule')
+  } else if (currentDraft.status === 'setup' && participants.length < 16) {
+    renderSchedulePreview()
+    initParticipantGrid()
+    showPhase('participants')
+  } else {
+    // It's active, or setup with 16 parts ready to go
+    if (currentDraft.status === 'setup') {
+        await supabase.from('drafts').update({ status: 'active' }).eq('id', currentDraft.id)
+        currentDraft.status = 'active'
+    }
+    startDraftBoard()
+  }
+}
+
+
+// ─── PHASE 1: SCHEDULE ─────────────────────────────────────────────
+btnFetch.addEventListener('click', async () => {
+  scheduleStatus.textContent = 'Fetching from MLB API...'
+  scheduleStatus.className = 'status-msg loading'
+  scheduleStatus.classList.remove('hidden')
+  btnFetch.disabled = true
+
+  try {
+    const start = `${currentDraft.season_year}-02-01`
+    const end = `${currentDraft.season_year}-12-31`
+    const teamId = 119 // Dodgers
+    const url = `https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=${teamId}&startDate=${start}&endDate=${end}`
+    
+    const res = await fetch(url)
+    const data = await res.json()
+    
+    // Parse games
+    const newGames = []
+    if (data.dates) {
+      data.dates.forEach(d => {
+        d.games.forEach(g => {
+          if (g.gameType === 'R' && g.teams.home.team.id === teamId) {
+            const dt = new Date(g.gameDate)
+            newGames.push({
+              draft_id: currentDraft.id,
+              mlb_game_pk: g.gamePk,
+              game_date: dt.toISOString().split('T')[0],
+              day_of_week: dt.toLocaleDateString('en-US', { weekday: 'short' }),
+              opponent: g.teams.away.team.name,
+              start_time: dt.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+            })
+          }
+        })
+      })
+    }
+
+    if (newGames.length === 0) throw new Error('No regular season home games found for ' + currentDraft.season_year)
+
+    // Save to Supabase
+    const { error } = await supabase.from('draft_games').insert(newGames)
+    if (error) throw error
+
+    // Fetch them back with IDs
+    const gRes = await supabase.from('draft_games').select('*').eq('draft_id', currentDraft.id).order('game_date')
+    games = gRes.data
+
+    scheduleStatus.textContent = `Successfully imported ${games.length} games!`
+    scheduleStatus.className = 'status-msg success'
+    renderSchedulePreview()
+    initParticipantGrid()
+    
+  } catch (err) {
+    scheduleStatus.textContent = err.message
+    scheduleStatus.className = 'status-msg error'
+  }
+  btnFetch.disabled = false
+})
+
+function renderSchedulePreview() {
+  gameCountEl.textContent = games.length
+  scheduleBody.innerHTML = games.map((g, i) => `
+    <tr>
+      <td>${i + 1}</td>
+      <td>${g.game_date}</td>
+      <td>${g.day_of_week}</td>
+      <td><strong>${g.opponent}</strong></td>
+      <td>${g.start_time}</td>
+    </tr>
+  `).join('')
+  btnNext1.classList.remove('hidden')
+}
+
+btnNext1.addEventListener('click', () => showPhase('participants'))
+btnBack2.addEventListener('click', () => showPhase('schedule'))
+
+
+// ─── PHASE 2: PARTICIPANTS ─────────────────────────────────────────
+function initParticipantGrid() {
+  participantGrid.innerHTML = ''
+  for (let i = 1; i <= 16; i++) {
+    const val = participants.find(p => p.pick_order === i)?.display_name || `Person ${i}`
+    participantGrid.innerHTML += `
+      <div class="participant-slot">
+        <label>Pick ${i}</label>
+        <input type="text" id="slot-${i}" value="${val}" class="slot-input" />
+      </div>
+    `
+  }
+  renderSnakePreview()
+}
+
+function getSlotNames() {
+  const names = []
+  for (let i = 1; i <= 16; i++) {
+    names.push(document.getElementById(`slot-${i}`).value.trim() || `Person ${i}`)
+  }
+  return names
+}
+
+btnRandomize.addEventListener('click', () => {
+  const names = getSlotNames()
+  // Shuffle array (Fisher-Yates)
+  for (let i = names.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [names[i], names[j]] = [names[j], names[i]];
+  }
+  for (let i = 1; i <= 16; i++) {
+    document.getElementById(`slot-${i}`).value = names[i - 1]
+  }
+  renderSnakePreview()
+})
+
+participantGrid.addEventListener('input', renderSnakePreview)
+
+function renderSnakePreview() {
+  const names = getSlotNames()
+  snakePreview.classList.remove('hidden')
+  let html = ''
+  for (let round = 1; round <= 2; round++) {
+    const isReverse = round % 2 === 0
+    let roundOrder = isReverse ? [...names].reverse() : [...names]
+    
+    roundOrder.forEach(name => {
+      // Find orig index for coloring
+      const origIndex = names.indexOf(name)
+      html += `<div class="snake-chip color-${origIndex}">${name}</div>`
+    })
+  }
+  html += `<div class="snake-chip" style="background:var(--surface-2);color:var(--text-dim);border:none;">...</div>`
+  snakeVisual.innerHTML = html
+}
+
+btnSaveParticipants.addEventListener('click', async () => {
+  const names = getSlotNames()
+  btnSaveParticipants.disabled = true
+  
+  // Wipe existing for draft, insert new
+  await supabase.from('draft_participants').delete().eq('draft_id', currentDraft.id)
+  
+  const payload = names.map((name, idx) => ({
+    draft_id: currentDraft.id,
+    pick_order: idx + 1,
+    display_name: name
+  }))
+
+  const { error, data } = await supabase.from('draft_participants').insert(payload).select()
+  
+  if (error) alert('Error saving participants: ' + error.message)
+  else {
+    participants = data.sort((a,b) => a.pick_order - b.pick_order)
+    // Mark draft active
+    await supabase.from('drafts').update({ status: 'active' }).eq('id', currentDraft.id)
+    btnSaveParticipants.textContent = 'Saved!'
+    setTimeout(() => {
+      startDraftBoard()
+    }, 500)
+  }
+})
+
+
+// ─── PHASE 3: DRAFT BOARD ──────────────────────────────────────────
+async function startDraftBoard() {
+  showPhase('draft')
+  
+  // Populate month filter
+  const months = [...new Set(games.map(g => new Date(g.game_date).toLocaleString('default', { month: 'long' })))]
+  filterMonth.innerHTML = '<option value="">All Months</option>' + months.map(m => `<option value="${m}">${m}</option>`).join('')
+
+  filterMonth.addEventListener('change', renderGames)
+  filterOpp.addEventListener('input', renderGames)
+  
+  // Realtime subscription
+  if (!realtimeChannel) {
+    realtimeChannel = supabase.channel(`public:draft_picks:draft_id=eq.${currentDraft.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
+        if (!pickLog.find(p => p.id === payload.new.id)) {
+          pickLog.push(payload.new)
+          pickLog.sort((a, b) => a.pick_number - b.pick_number)
+          updateBoard()
+        }
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
+        pickLog = pickLog.filter(p => p.id !== payload.old.id)
+        updateBoard()
+      })
+      .subscribe()
+  }
+
+  updateBoard()
+}
+
+function updateBoard() {
+  renderGames()
+  renderOrderList()
+  renderDraftLog()
+  renderPickBanner()
+}
+
+// Data Helpers
+const totalPicksNeeded = games.length * 2
+const isDraftOver = () => pickLog.length >= totalPicksNeeded
+
+function getPickerAtOverall(overallPickNum) {
+  if (overallPickNum > totalPicksNeeded) return null
+  const numParticipants = participants.length
+  if (numParticipants === 0) return null
+  const round = Math.ceil(overallPickNum / numParticipants)
+  const isReverse = round % 2 === 0
+  const pickInRound = ((overallPickNum - 1) % numParticipants) + 1
+  let slotTarget = isReverse ? (numParticipants - pickInRound + 1) : pickInRound
+  return participants.find(p => p.pick_order === slotTarget)
+}
+
+function getGamePickStats(gameId) {
+  return pickLog.filter(p => p.game_id === gameId).length
+}
+
+// Renders
+function renderGames() {
+  const term = filterOpp.value.toLowerCase()
+  const mFilt = filterMonth.value
+
+  const filtered = games.filter(g => {
+    const oppMtch = g.opponent.toLowerCase().includes(term)
+    const dt = new Date(g.game_date)
+    const mMtch = mFilt ? dt.toLocaleString('default', { month: 'long' }) === mFilt : true
+    return oppMtch && mMtch
+  })
+
+  gameListEl.innerHTML = filtered.map(g => {
+    const dt = new Date(g.game_date)
+    const formatDt = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })
+    const picksCount = getGamePickStats(g.id)
+    
+    let stateClass = ''
+    if (picksCount === 1) stateClass = 'taken-1'
+    if (picksCount >= 2) stateClass = 'taken-2'
+
+    return `
+      <div class="game-item ${stateClass}" onclick="makePick('${g.id}')">
+        <div class="game-info">
+          <div class="game-date">${formatDt} &middot; ${g.start_time}</div>
+          <div class="game-opp">vs ${g.opponent}</div>
+        </div>
+        <div class="game-slots">
+          <div class="slot-dot ${picksCount >= 1 ? 'filled' : ''}"></div>
+          <div class="slot-dot ${picksCount >= 2 ? 'filled' : ''}"></div>
+        </div>
+      </div>
+    `
+  }).join('')
+}
+
+function renderPickBanner() {
+  if (isDraftOver()) {
+    pickRoundNum.parentNode.textContent = 'DRAFT COMPLETE'
+    pickDrafter.textContent = 'See Final Results Below'
+    if (document.getElementById('pick-instruction')) {
+      document.getElementById('pick-instruction').textContent = "All tickets have been claimed!"
+    }
+    return
+  }
+
+  const overallPickNum = pickLog.length + 1
+  const round = Math.ceil(overallPickNum / participants.length)
+  const picker = getPickerAtOverall(overallPickNum)
+
+  pickRoundNum.textContent = round
+  pickOverallNum.textContent = overallPickNum
+  pickDrafter.textContent = picker ? picker.display_name : 'Unknown'
+  
+  if (document.getElementById('pick-instruction')) {
+    document.getElementById('pick-instruction').textContent = 
+      (picker?.user_id === currentUser?.id) ? 'It is your turn! Select a game.' : "Select a game from the left panel when it's your turn"
+  }
+}
+
+function renderOrderList() {
+  if (isDraftOver()) {
+    orderList.innerHTML = ''
+    renderFinalResults()
+    resultsSection.classList.remove('hidden')
+    return
+  }
+
+  const overallPickNum = pickLog.length + 1
+  
+  let html = ''
+  // Show next 20 picks roughly
+  const maxLookahead = Math.min(overallPickNum + 20, totalPicksNeeded)
+  
+  for (let i = Math.max(1, overallPickNum - 5); i <= maxLookahead; i++) {
+    const picker = getPickerAtOverall(i)
+    if (!picker) continue
+    
+    const isPast = i < overallPickNum
+    const isCurrent = i === overallPickNum
+    const colorClass = `color-${picker.pick_order - 1}`
+    
+    let text = `${picker.display_name}`
+    if (isPast) {
+      const logItem = pickLog.find(p => p.pick_number === i)
+      const g = games.find(g => g.id === logItem?.game_id)
+      if (g) text += ` <span style="font-size:0.7em;float:right;color:var(--text-muted)">vs ${g.opponent}</span>`
+    }
+
+    html += `
+      <div class="order-item ${isPast ? 'picked' : ''} ${isCurrent ? 'current' : ''}" ${isCurrent ? 'id="current-pick-ref"' : ''}>
+        <div class="order-pos">${i}</div>
+        <div class="order-name ${colorClass}" style="color:var(--pcolor);flex:1;">${text}</div>
+      </div>
+    `
+  }
+  orderList.innerHTML = html
+
+  setTimeout(() => {
+    const curEl = document.getElementById('current-pick-ref')
+    if (curEl) curEl.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, 100)
+}
+
+function renderDraftLog() {
+  draftLog.innerHTML = pickLog.map(log => {
+    const picker = participants.find(p => p.id === log.participant_id)
+    const game = games.find(g => g.id === log.game_id)
+    
+    if (!picker || !game) return ''
+    
+    const dt = new Date(game.game_date)
+    const formatDt = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+    const colorClass = `color-${picker.pick_order - 1}`
+
+    return `
+      <div class="log-entry">
+        <div class="log-num">#${log.pick_number}</div>
+        <div class="log-name ${colorClass}" style="color:var(--pcolor)">${picker.display_name}</div>
+        <div class="log-game">vs ${game.opponent} <span style="font-size:0.8em;opacity:0.6">(${formatDt})</span></div>
+      </div>
+    `
+  }).reverse().join('')
+}
+
+function renderFinalResults() {
+  // Group picks by participant
+  const results = participants.map(p => {
+    const pPicks = pickLog.filter(pl => pl.participant_id === p.id)
+    const gameStrings = pPicks.map(pl => {
+      const g = games.find(g => g.id === pl.game_id)
+      if (!g) return 'Unknown'
+      const dt = new Date(g.game_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+      return `vs ${g.opponent} (${dt})`
+    })
+    return { name: p.display_name, games: gameStrings }
+  })
+
+  resultsBody.innerHTML = results.map(r => `
+    <div class="result-person">
+      <div class="result-person-name">${r.name}</div>
+      <ul class="result-games">
+        ${r.games.map(g => `<li>${g}</li>`).join('')}
+      </ul>
+    </div>
+  `).join('')
+}
+
+// ─── ACTIONS ───────────────────────────────────────────────────────
+window.makePick = async (gameId) => {
+  if (isDraftOver()) return
+  const picksCount = getGamePickStats(gameId)
+  if (picksCount >= 2) return // Full slots
+  
+  const overallPickNum = pickLog.length + 1
+  const picker = getPickerAtOverall(overallPickNum)
+  
+  // Optimistic UI update
+  const tempId = 'temp-' + Date.now()
+  const newPick = {
+    id: tempId,
+    draft_id: currentDraft.id,
+    participant_id: picker.id,
+    game_id: gameId,
+    pick_number: overallPickNum
+  }
+  pickLog.push(newPick)
+  updateBoard()
+
+  const { error } = await supabase.from('draft_picks').insert({
+    draft_id: currentDraft.id,
+    participant_id: picker.id,
+    game_id: gameId,
+    pick_number: overallPickNum
+  })
+
+  if (error) {
+    alert('Pick failed: ' + error.message)
+    pickLog = pickLog.filter(p => p.id !== tempId)
+    updateBoard()
+  }
+}
+
+// Global scope undo (only owner can do this realistically, but leaving open for now)
+document.addEventListener('keydown', async (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+    e.preventDefault()
+    if (pickLog.length === 0) return
+    const lastPick = pickLog.reduce((max, p) => p.pick_number > max.pick_number ? p : max, pickLog[0])
+    
+    // Optimistic remove
+    pickLog = pickLog.filter(p => p.id !== lastPick.id)
+    updateBoard()
+
+    await supabase.from('draft_picks').delete().eq('id', lastPick.id)
+  }
+})
+
+document.getElementById('btn-export')?.addEventListener('click', () => alert('Copy via clipboard temporarily disabled in simple mode.'))
+
+btnBack3.addEventListener('click', () => {
+  if (realtimeChannel) realtimeChannel.unsubscribe()
+  showPhase('lobby')
+})
+
+// Boot
+init()

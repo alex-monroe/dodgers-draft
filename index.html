@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dodgers Season Ticket Draft</title>
+  <meta name="description" content="Snake draft app for sharing Dodgers season tickets among friends." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- ─── Header ─── -->
+  <header id="app-header">
+    <div class="header-inner">
+      <div class="logo">
+        <span class="logo-icon">⚾</span>
+        <h1>Dodgers Ticket Draft</h1>
+      </div>
+      <div class="header-user hidden" id="header-user">
+        <span id="user-display-name"></span>
+        <button id="btn-logout" class="btn btn-ghost btn-sm">Sign Out</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="app-main">
+    <!-- ═══════ Phase 0: Auth ═══════ -->
+    <section id="phase-auth" class="phase active">
+      <div class="phase-card auth-card">
+        <h2>Welcome to the Draft</h2>
+        <p class="subtitle">Sign in to join a draft or create a new one.</p>
+        
+        <form id="auth-form">
+          <div class="form-group">
+            <label for="auth-email">Email Address</label>
+            <input type="email" id="auth-email" required placeholder="you@example.com" />
+          </div>
+          <div class="form-group">
+            <label for="auth-password">Password</label>
+            <input type="password" id="auth-password" required placeholder="••••••••" />
+          </div>
+          <div class="form-group" id="name-group">
+            <label for="auth-name">Display Name (for new accounts)</label>
+            <input type="text" id="auth-name" placeholder="E.g. Alex" />
+          </div>
+          
+          <div id="auth-error" class="status-msg error hidden"></div>
+          
+          <button type="submit" id="btn-login" class="btn btn-primary btn-wide">Sign In / Sign Up</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ═══════ Phase 0.5: Lobby ═══════ -->
+    <section id="phase-lobby" class="phase">
+      <div class="phase-card">
+        <h2>Draft Lobby</h2>
+        <p class="subtitle">Select an active draft to join, or create a new one.</p>
+
+        <div class="lobby-grid">
+          <!-- Left: Active Drafts -->
+          <div class="lobby-panel">
+            <h3>Available Drafts</h3>
+            <div id="lobby-drafts-list" class="lobby-list">
+              <div class="status-msg loading">Loading drafts...</div>
+            </div>
+          </div>
+          
+          <!-- Right: Create Draft -->
+          <div class="lobby-panel create-panel">
+            <h3>Create a New Draft</h3>
+            <div class="form-group">
+              <label for="new-draft-name">Draft Name</label>
+              <input type="text" id="new-draft-name" placeholder="2025 Regular Season" />
+            </div>
+            <div class="form-group">
+              <label for="new-draft-year">Season Year</label>
+              <input type="number" id="new-draft-year" value="2025" />
+            </div>
+            <button id="btn-create-draft" class="btn btn-primary btn-wide">Create Draft</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Phase Stepper for active drafts -->
+    <div class="stepper-wrap hidden" id="stepper-wrap">
+      <div class="stepper" id="stepper">
+        <div class="step active" data-step="1"><span class="step-num">1</span> Schedule</div>
+        <div class="step-line"></div>
+        <div class="step" data-step="2"><span class="step-num">2</span> Setup</div>
+        <div class="step-line"></div>
+        <div class="step" data-step="3"><span class="step-num">3</span> Draft</div>
+      </div>
+    </div>
+
+    <!-- ═══════ Phase 1: Schedule ═══════ -->
+    <section id="phase-schedule" class="phase">
+      <div class="phase-card">
+        <h2>Load the Dodgers Home Schedule</h2>
+        <p class="subtitle">Only the draft creator can set the schedule.</p>
+
+        <div class="action-row" id="schedule-actions">
+          <div class="action-card" id="fetch-card">
+            <div class="action-icon">🌐</div>
+            <h3>Fetch from MLB</h3>
+            <p>Pull the official home schedule.</p>
+            <button id="btn-fetch" class="btn btn-primary">Fetch Schedule</button>
+          </div>
+        </div>
+
+        <div id="schedule-status" class="status-msg hidden"></div>
+
+        <div id="schedule-preview">
+          <h3>Schedule (<span id="game-count">0</span> games)</h3>
+          <div class="table-wrap">
+            <table id="schedule-table">
+              <thead>
+                <tr><th>#</th><th>Date</th><th>Day</th><th>Opponent</th><th>Time</th></tr>
+              </thead>
+              <tbody id="schedule-body">
+                <tr><td colspan="5" style="text-align:center; color: var(--text-dim)">Awaiting schedule...</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <button id="btn-next-1" class="btn btn-primary btn-wide hidden">Continue to Participants →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════ Phase 2: Participants ═══════ -->
+    <section id="phase-participants" class="phase">
+      <div class="phase-card">
+        <h2>Set Up Draft Participants</h2>
+        <p class="subtitle">Draft creator establishes the 16 slots. Users can then claim a slot.</p>
+
+        <div class="participant-grid" id="participant-grid"></div>
+
+        <div class="order-actions" id="setup-actions">
+          <button id="btn-randomize" class="btn btn-secondary">🎲 Randomize Order</button>
+          <button id="btn-save-participants" class="btn btn-primary">Save & Lock Participants</button>
+        </div>
+
+        <div id="snake-preview" class="hidden">
+          <h3>Snake Draft Order Preview</h3>
+          <div id="snake-visual" class="snake-visual"></div>
+        </div>
+
+        <div class="nav-row">
+          <button id="btn-back-2" class="btn btn-ghost">← Back to Schedule</button>
+          <button id="btn-next-2" class="btn btn-primary hidden">Enter Draft Room →</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ═══════ Phase 3: Draft Board ═══════ -->
+    <section id="phase-draft" class="phase">
+      <div class="draft-layout">
+        <div class="draft-panel panel-games">
+          <div class="panel-header">
+            <h3>Available Games</h3>
+            <div class="filter-row">
+              <select id="filter-month"><option value="">All Months</option></select>
+              <input type="text" id="filter-opp" placeholder="Search opponent…" />
+            </div>
+          </div>
+          <div class="game-list" id="game-list"></div>
+        </div>
+
+        <div class="draft-panel panel-center">
+          <div class="pick-banner" id="pick-banner">
+            <div class="pick-round">Waiting for draft to start</div>
+            <div class="pick-drafter" id="pick-drafter">—</div>
+            <div class="pick-instruction" id="pick-instruction">Waiting...</div>
+          </div>
+
+          <div class="draft-log-wrap">
+            <h3>Pick History <span id="sync-status" class="badge bg-success" style="float:right;font-size:0.7rem">Synced</span></h3>
+            <div class="draft-log" id="draft-log"></div>
+          </div>
+
+          <div class="draft-actions">
+            <button id="btn-back-3" class="btn btn-ghost">← Lobby</button>
+          </div>
+        </div>
+
+        <div class="draft-panel panel-order">
+          <h3>Draft Order</h3>
+          <div class="order-list" id="order-list"></div>
+
+          <div id="results-section" class="hidden">
+            <h3>Final Results</h3>
+            <button id="btn-export" class="btn btn-primary btn-wide">📋 Copy Results</button>
+            <div id="results-body"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
