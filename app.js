@@ -530,11 +530,11 @@ function updateBoard() {
 }
 
 // Data Helpers
-const totalPicksNeeded = games.length * 2
-const isDraftOver = () => pickLog.length >= totalPicksNeeded
+function getTotalPicksNeeded() { return games.length * 2 }
+const isDraftOver = () => pickLog.length >= getTotalPicksNeeded()
 
 function getPickerAtOverall(overallPickNum) {
-  if (overallPickNum > totalPicksNeeded) return null
+  if (overallPickNum > getTotalPicksNeeded()) return null
   const numParticipants = participants.length
   if (numParticipants === 0) return null
   const round = Math.ceil(overallPickNum / numParticipants)
@@ -623,7 +623,7 @@ function renderOrderList() {
   
   let html = ''
   // Show next 20 picks roughly
-  const maxLookahead = Math.min(overallPickNum + 20, totalPicksNeeded)
+  const maxLookahead = Math.min(overallPickNum + 20, getTotalPicksNeeded())
   
   for (let i = Math.max(1, overallPickNum - 5); i <= maxLookahead; i++) {
     const picker = getPickerAtOverall(i)
