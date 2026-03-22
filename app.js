@@ -700,14 +700,16 @@ function renderFinalResults() {
 }
 
 // ─── ACTIONS ───────────────────────────────────────────────────────
+let pickInFlight = false
 window.makePick = async (gameId) => {
+  if (pickInFlight) return
   if (isDraftOver()) return
   const picksCount = getGamePickStats(gameId)
   if (picksCount >= 2) return // Full slots
-  
+
   const overallPickNum = pickLog.length + 1
   const picker = getPickerAtOverall(overallPickNum)
-  
+
   // Optimistic UI update
   const tempId = 'temp-' + Date.now()
   const newPick = {
@@ -720,17 +722,23 @@ window.makePick = async (gameId) => {
   pickLog.push(newPick)
   updateBoard()
 
-  const { error } = await supabase.from('dd_draft_picks').insert({
+  pickInFlight = true
+  const { data, error } = await supabase.from('dd_draft_picks').insert({
     draft_id: currentDraft.id,
     participant_id: picker.id,
     game_id: gameId,
     pick_number: overallPickNum
-  })
+  }).select().single()
+  pickInFlight = false
 
   if (error) {
     alert('Pick failed: ' + error.message)
     pickLog = pickLog.filter(p => p.id !== tempId)
     updateBoard()
+  } else {
+    // Replace temp pick with real one so realtime doesn't duplicate it
+    const idx = pickLog.findIndex(p => p.id === tempId)
+    if (idx !== -1) pickLog[idx] = data
   }
 }
 
