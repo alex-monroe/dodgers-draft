@@ -146,7 +146,7 @@ btnLogout.addEventListener('click', () => {
 // ─── LOBBY ─────────────────────────────────────────────────────────
 async function loadLobby() {
   lobbyDraftsList.innerHTML = '<div class="status-msg loading">Loading drafts...</div>'
-  const { data, error } = await supabase.from('drafts').select(`id, name, season_year, status, owner_id, users(display_name)`).order('created_at', { ascending: false })
+  const { data, error } = await supabase.from('dd_drafts').select(`id, name, season_year, status, owner_id, dd_users(display_name)`).order('created_at', { ascending: false })
   
   if (error) {
     lobbyDraftsList.innerHTML = `<div class="status-msg error">Error: ${error.message}</div>`
@@ -162,7 +162,7 @@ async function loadLobby() {
     <div class="lobby-item" onclick="joinDraft('${d.id}')">
       <div>
         <div class="lobby-item-title">${d.name} (${d.season_year})</div>
-        <div class="lobby-item-meta">Status: ${d.status.toUpperCase()} &middot; Host: ${d.users?.display_name || 'Unknown'}</div>
+        <div class="lobby-item-meta">Status: ${d.status.toUpperCase()} &middot; Host: ${d.dd_users?.display_name || 'Unknown'}</div>
       </div>
       <button class="btn btn-ghost btn-sm">Join →</button>
     </div>
@@ -173,7 +173,7 @@ btnCreateDraft.addEventListener('click', async () => {
   const name = newDraftName.value.trim() || 'New Draft'
   const year = parseInt(newDraftYear.value) || new Date().getFullYear()
   
-  const { data, error } = await supabase.from('drafts').insert([{
+  const { data, error } = await supabase.from('dd_drafts').insert([{
     name, season_year: year, owner_id: currentUser.id, status: 'setup'
   }]).select().single()
 
@@ -187,14 +187,14 @@ window.joinDraft = async (draftId) => {
     realtimeChannel = null
   }
 
-  const { data: d } = await supabase.from('drafts').select('*').eq('id', draftId).single()
+  const { data: d } = await supabase.from('dd_drafts').select('*').eq('id', draftId).single()
   currentDraft = d
 
   // Fetch games & participants & picks
   const [gRes, pRes, picksRes] = await Promise.all([
-    supabase.from('draft_games').select('*').eq('draft_id', draftId).order('game_date', { ascending: true }),
-    supabase.from('draft_participants').select('*').eq('draft_id', draftId).order('pick_order', { ascending: true }),
-    supabase.from('draft_picks').select('*').eq('draft_id', draftId).order('pick_number', { ascending: true })
+    supabase.from('dd_draft_games').select('*').eq('draft_id', draftId).order('game_date', { ascending: true }),
+    supabase.from('dd_draft_participants').select('*').eq('draft_id', draftId).order('pick_order', { ascending: true }),
+    supabase.from('dd_draft_picks').select('*').eq('draft_id', draftId).order('pick_number', { ascending: true })
   ])
 
   games = gRes.data || []
@@ -211,7 +211,7 @@ window.joinDraft = async (draftId) => {
   } else {
     // It's active, or setup with 16 parts ready to go
     if (currentDraft.status === 'setup') {
-        await supabase.from('drafts').update({ status: 'active' }).eq('id', currentDraft.id)
+        await supabase.from('dd_drafts').update({ status: 'active' }).eq('id', currentDraft.id)
         currentDraft.status = 'active'
     }
     startDraftBoard()
@@ -258,11 +258,11 @@ btnFetch.addEventListener('click', async () => {
     if (newGames.length === 0) throw new Error('No regular season home games found for ' + currentDraft.season_year)
 
     // Save to Supabase
-    const { error } = await supabase.from('draft_games').insert(newGames)
+    const { error } = await supabase.from('dd_draft_games').insert(newGames)
     if (error) throw error
 
     // Fetch them back with IDs
-    const gRes = await supabase.from('draft_games').select('*').eq('draft_id', currentDraft.id).order('game_date')
+    const gRes = await supabase.from('dd_draft_games').select('*').eq('draft_id', currentDraft.id).order('game_date')
     games = gRes.data
 
     scheduleStatus.textContent = `Successfully imported ${games.length} games!`
@@ -356,7 +356,7 @@ btnSaveParticipants.addEventListener('click', async () => {
   btnSaveParticipants.disabled = true
   
   // Wipe existing for draft, insert new
-  await supabase.from('draft_participants').delete().eq('draft_id', currentDraft.id)
+  await supabase.from('dd_draft_participants').delete().eq('draft_id', currentDraft.id)
   
   const payload = names.map((name, idx) => ({
     draft_id: currentDraft.id,
@@ -364,13 +364,13 @@ btnSaveParticipants.addEventListener('click', async () => {
     display_name: name
   }))
 
-  const { error, data } = await supabase.from('draft_participants').insert(payload).select()
+  const { error, data } = await supabase.from('dd_draft_participants').insert(payload).select()
   
   if (error) alert('Error saving participants: ' + error.message)
   else {
     participants = data.sort((a,b) => a.pick_order - b.pick_order)
     // Mark draft active
-    await supabase.from('drafts').update({ status: 'active' }).eq('id', currentDraft.id)
+    await supabase.from('dd_drafts').update({ status: 'active' }).eq('id', currentDraft.id)
     btnSaveParticipants.textContent = 'Saved!'
     setTimeout(() => {
       startDraftBoard()
@@ -393,14 +393,14 @@ async function startDraftBoard() {
   // Realtime subscription
   if (!realtimeChannel) {
     realtimeChannel = supabase.channel(`public:draft_picks:draft_id=eq.${currentDraft.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'dd_draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
         if (!pickLog.find(p => p.id === payload.new.id)) {
           pickLog.push(payload.new)
           pickLog.sort((a, b) => a.pick_number - b.pick_number)
           updateBoard()
         }
       })
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'dd_draft_picks', filter: `draft_id=eq.${currentDraft.id}` }, payload => {
         pickLog = pickLog.filter(p => p.id !== payload.old.id)
         updateBoard()
       })
@@ -605,7 +605,7 @@ window.makePick = async (gameId) => {
   pickLog.push(newPick)
   updateBoard()
 
-  const { error } = await supabase.from('draft_picks').insert({
+  const { error } = await supabase.from('dd_draft_picks').insert({
     draft_id: currentDraft.id,
     participant_id: picker.id,
     game_id: gameId,
@@ -630,7 +630,7 @@ document.addEventListener('keydown', async (e) => {
     pickLog = pickLog.filter(p => p.id !== lastPick.id)
     updateBoard()
 
-    await supabase.from('draft_picks').delete().eq('id', lastPick.id)
+    await supabase.from('dd_draft_picks').delete().eq('id', lastPick.id)
   }
 })
 

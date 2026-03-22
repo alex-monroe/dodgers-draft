@@ -3,7 +3,7 @@
 
 
 -- 1. Users table extending Supabase auth.users
-CREATE TABLE public.users (
+CREATE TABLE public.dd_users (
     id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     email VARCHAR(255) UNIQUE NOT NULL,
     display_name VARCHAR(100) NOT NULL,
@@ -11,11 +11,11 @@ CREATE TABLE public.users (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Trigger to automatically create a public.users row when a new user signs up
+-- Trigger to automatically create a public.dd_users row when a new user signs up
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS trigger AS $$
 BEGIN
-  INSERT INTO public.users (id, email, display_name)
+  INSERT INTO public.dd_users (id, email, display_name)
   VALUES (new.id, new.email, COALESCE(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1)));
   RETURN new;
 END;
@@ -27,9 +27,9 @@ CREATE TRIGGER on_auth_user_created
 
 
 -- 2. Drafts table representing a single draft session
-CREATE TABLE public.drafts (
+CREATE TABLE public.dd_drafts (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    owner_id UUID REFERENCES public.users(id) ON DELETE CASCADE,
+    owner_id UUID REFERENCES public.dd_users(id) ON DELETE CASCADE,
     name VARCHAR(255) NOT NULL,
     season_year INT NOT NULL,
     status VARCHAR(50) DEFAULT 'setup' CHECK (status IN ('setup', 'active', 'completed')),
@@ -39,41 +39,41 @@ CREATE TABLE public.drafts (
 
 
 -- 3. Draft Participants table (the 16 slots)
-CREATE TABLE public.draft_participants (
+CREATE TABLE public.dd_draft_participants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    draft_id UUID REFERENCES public.drafts(id) ON DELETE CASCADE,
-    user_id UUID REFERENCES public.users(id) ON DELETE SET NULL, -- Null until claimed
+    draft_id UUID REFERENCES public.dd_drafts(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES public.dd_users(id) ON DELETE SET NULL, -- Null until claimed
     pick_order INT NOT NULL CHECK (pick_order >= 1 AND pick_order <= 16),
     display_name VARCHAR(100) NOT NULL, -- E.g. "Alex" or "Person 1"
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     UNIQUE(draft_id, pick_order)
 );
 
 
 -- 4. Draft Games table
-CREATE TABLE public.draft_games (
+CREATE TABLE public.dd_draft_games (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    draft_id UUID REFERENCES public.drafts(id) ON DELETE CASCADE,
+    draft_id UUID REFERENCES public.dd_drafts(id) ON DELETE CASCADE,
     mlb_game_pk INT,
     game_date DATE NOT NULL,
     day_of_week VARCHAR(10),
     opponent VARCHAR(100) NOT NULL,
     start_time VARCHAR(50),
-    
+
     UNIQUE(draft_id, mlb_game_pk)
 );
 
 
 -- 5. Draft Picks table tracking the history of picks
-CREATE TABLE public.draft_picks (
+CREATE TABLE public.dd_draft_picks (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    draft_id UUID REFERENCES public.drafts(id) ON DELETE CASCADE,
-    participant_id UUID REFERENCES public.draft_participants(id) ON DELETE CASCADE,
-    game_id UUID REFERENCES public.draft_games(id) ON DELETE CASCADE,
+    draft_id UUID REFERENCES public.dd_drafts(id) ON DELETE CASCADE,
+    participant_id UUID REFERENCES public.dd_draft_participants(id) ON DELETE CASCADE,
+    game_id UUID REFERENCES public.dd_draft_games(id) ON DELETE CASCADE,
     pick_number INT NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    
+
     UNIQUE(draft_id, pick_number)
 );
 
@@ -81,7 +81,7 @@ CREATE TABLE public.draft_picks (
 CREATE OR REPLACE FUNCTION check_game_pick_limit()
 RETURNS TRIGGER AS $$
 BEGIN
-    IF (SELECT count(*) FROM public.draft_picks WHERE game_id = NEW.game_id) >= 2 THEN
+    IF (SELECT count(*) FROM public.dd_draft_picks WHERE game_id = NEW.game_id) >= 2 THEN
         RAISE EXCEPTION 'This game has already been picked twice.';
     END IF;
     RETURN NEW;
@@ -89,7 +89,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER enforce_two_picks_per_game
-BEFORE INSERT ON public.draft_picks
+BEFORE INSERT ON public.dd_draft_picks
 FOR EACH ROW
 EXECUTE FUNCTION check_game_pick_limit();
 
@@ -98,24 +98,24 @@ EXECUTE FUNCTION check_game_pick_limit();
 -- ROW LEVEL SECURITY (RLS) POLICIES
 -- ==========================================
 
-ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.drafts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.draft_participants ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.draft_games ENABLE ROW LEVEL SECURITY;
-ALTER TABLE public.draft_picks ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dd_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dd_drafts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dd_draft_participants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dd_draft_games ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.dd_draft_picks ENABLE ROW LEVEL SECURITY;
 
 -- For ease of use among friends, we allow any authenticated user to read/write.
 -- In a production, zero-trust environment, you would restrict these further.
 
-CREATE POLICY "Allow read access to authenticated users" ON public.users FOR SELECT TO authenticated USING (true);
-CREATE POLICY "Allow update access to own user profile" ON public.users FOR UPDATE TO authenticated USING (auth.uid() = id);
+CREATE POLICY "Allow read access to authenticated users" ON public.dd_users FOR SELECT TO authenticated USING (true);
+CREATE POLICY "Allow update access to own user profile" ON public.dd_users FOR UPDATE TO authenticated USING (auth.uid() = id);
 
-CREATE POLICY "Allow all access to authenticated users" ON public.drafts FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access to authenticated users" ON public.draft_participants FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access to authenticated users" ON public.draft_games FOR ALL TO authenticated USING (true) WITH CHECK (true);
-CREATE POLICY "Allow all access to authenticated users" ON public.draft_picks FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to authenticated users" ON public.dd_drafts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to authenticated users" ON public.dd_draft_participants FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to authenticated users" ON public.dd_draft_games FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow all access to authenticated users" ON public.dd_draft_picks FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
 -- Allow Realtime to listen to draft picks inserts/deletes
-ALTER PUBLICATION supabase_realtime ADD TABLE public.draft_picks;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.drafts;
-ALTER PUBLICATION supabase_realtime ADD TABLE public.draft_participants;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.dd_draft_picks;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.dd_drafts;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.dd_draft_participants;
