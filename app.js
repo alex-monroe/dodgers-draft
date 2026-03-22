@@ -7,9 +7,13 @@ let participants = [] // Array of { id, pick_order, display_name, user_id }
 let games = []        // Array of { id, game_date, opponent, ... }
 let pickLog = []      // Array of { id, pick_number, participant_id, game_id }
 let realtimeChannel = null
+let isAdmin = false
+let claimedName = null // display_name from localStorage for visitors
 
 // ─── DOM ELEMENTS ──────────────────────────────────────────────────
 const phases = {
+  'no-draft': document.getElementById('phase-no-draft'),
+  claim: document.getElementById('phase-claim'),
   auth: document.getElementById('phase-auth'),
   lobby: document.getElementById('phase-lobby'),
   schedule: document.getElementById('phase-schedule'),
@@ -27,7 +31,6 @@ const stepperWrap = document.getElementById('stepper-wrap')
 const authForm = document.getElementById('auth-form')
 const authEmail = document.getElementById('auth-email')
 const authPassword = document.getElementById('auth-password')
-const authName = document.getElementById('auth-name')
 const authError = document.getElementById('auth-error')
 
 // Lobby
@@ -68,31 +71,122 @@ const btnBack3 = document.getElementById('btn-back-3')
 
 // ─── INITIALIZATION ────────────────────────────────────────────────
 async function init() {
-  // Listen for auth state changes
+  // Admin login/logout buttons
+  document.getElementById('btn-admin-login')?.addEventListener('click', () => showPhase('auth'))
+  document.getElementById('btn-admin-login-2')?.addEventListener('click', () => showPhase('auth'))
+  document.getElementById('btn-back-to-visitor')?.addEventListener('click', () => loadVisitorView())
+
+  // Listen for auth state changes — only navigate when admin status actually changes
   supabase.auth.onAuthStateChange((event, session) => {
+    if (event === 'INITIAL_SESSION') return // handled below
     if (session) {
+      if (isAdmin) return // already logged in, don't disrupt current view
       currentUser = session.user
+      isAdmin = true
       headerUser.classList.remove('hidden')
       userDisplayName.textContent = currentUser.user_metadata?.display_name || currentUser.email
+      btnLogout.textContent = 'Sign Out'
       showPhase('lobby')
       loadLobby()
     } else {
       currentUser = null
+      isAdmin = false
       headerUser.classList.add('hidden')
-      showPhase('auth')
+      loadVisitorView()
     }
   })
 
   // Check initial session
   const { data: { session } } = await supabase.auth.getSession()
-  if (!session) showPhase('auth')
+  if (session) {
+    currentUser = session.user
+    isAdmin = true
+    headerUser.classList.remove('hidden')
+    userDisplayName.textContent = currentUser.user_metadata?.display_name || currentUser.email
+    btnLogout.textContent = 'Sign Out'
+    showPhase('lobby')
+    loadLobby()
+  } else {
+    loadVisitorView()
+  }
+}
+
+async function loadVisitorView() {
+  // Fetch the active draft (anon RLS allows this)
+  const { data: activeDrafts } = await supabase
+    .from('dd_drafts')
+    .select('*')
+    .eq('status', 'active')
+    .limit(1)
+
+  if (!activeDrafts || activeDrafts.length === 0) {
+    showPhase('no-draft')
+    return
+  }
+
+  currentDraft = activeDrafts[0]
+
+  // Load draft data
+  const [gRes, pRes, picksRes] = await Promise.all([
+    supabase.from('dd_draft_games').select('*').eq('draft_id', currentDraft.id).order('game_date'),
+    supabase.from('dd_draft_participants').select('*').eq('draft_id', currentDraft.id).order('pick_order'),
+    supabase.from('dd_draft_picks').select('*').eq('draft_id', currentDraft.id).order('pick_number')
+  ])
+
+  games = gRes.data || []
+  participants = pRes.data || []
+  pickLog = picksRes.data || []
+
+  // Check localStorage for previous claim
+  const saved = localStorage.getItem('dodgers-draft-claim')
+  if (saved) {
+    try {
+      const parsed = JSON.parse(saved)
+      if (parsed.draftId === currentDraft.id && participants.some(p => p.display_name === parsed.displayName)) {
+        claimedName = parsed.displayName
+      }
+    } catch {}
+  }
+
+  if (claimedName) {
+    headerUser.classList.remove('hidden')
+    userDisplayName.textContent = claimedName
+    btnLogout.textContent = 'Change'
+    startDraftBoard()
+  } else {
+    showClaimScreen()
+  }
+}
+
+function showClaimScreen() {
+  // Deduplicate participant names
+  const uniqueNames = [...new Set(participants.map(p => p.display_name))]
+  const grid = document.getElementById('claim-grid')
+  grid.innerHTML = uniqueNames.map(name => `
+    <div class="claim-card" onclick="claimParticipant('${name.replace(/'/g, "\\'")}')">
+      <div class="claim-name">${name}</div>
+    </div>
+  `).join('')
+  showPhase('claim')
+}
+
+window.claimParticipant = (name) => {
+  claimedName = name
+  localStorage.setItem('dodgers-draft-claim', JSON.stringify({
+    draftId: currentDraft.id,
+    displayName: name
+  }))
+  headerUser.classList.remove('hidden')
+  userDisplayName.textContent = name
+  btnLogout.textContent = 'Change'
+  startDraftBoard()
 }
 
 function showPhase(phaseId) {
   Object.values(phases).forEach(el => el.classList.remove('active'))
   if (phases[phaseId]) phases[phaseId].classList.add('active')
   
-  if (phaseId === 'auth' || phaseId === 'lobby') {
+  if (phaseId === 'auth' || phaseId === 'lobby' || phaseId === 'no-draft' || phaseId === 'claim') {
     stepperWrap.classList.add('hidden')
   } else {
     stepperWrap.classList.remove('hidden')
@@ -116,20 +210,8 @@ authForm.addEventListener('submit', async (e) => {
   authError.classList.add('hidden')
   const email = authEmail.value.trim()
   const password = authPassword.value
-  const name = authName.value.trim()
 
-  // Try signing in first
-  let { data, error } = await supabase.auth.signInWithPassword({ email, password })
-  
-  // If invalid credentials, try signing up
-  if (error && error.message.includes('Invalid login')) {
-    const signupData = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { display_name: name || email.split('@')[0] } }
-    })
-    error = signupData.error
-  }
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) {
     authError.textContent = error.message
@@ -138,8 +220,17 @@ authForm.addEventListener('submit', async (e) => {
 })
 
 btnLogout.addEventListener('click', () => {
-  if (realtimeChannel) realtimeChannel.unsubscribe()
-  supabase.auth.signOut()
+  if (isAdmin) {
+    if (realtimeChannel) { realtimeChannel.unsubscribe(); realtimeChannel = null }
+    supabase.auth.signOut()
+  } else {
+    // Visitor: clear claim and go back to claim screen
+    localStorage.removeItem('dodgers-draft-claim')
+    claimedName = null
+    headerUser.classList.add('hidden')
+    if (realtimeChannel) { realtimeChannel.unsubscribe(); realtimeChannel = null }
+    showClaimScreen()
+  }
 })
 
 
@@ -159,12 +250,20 @@ async function loadLobby() {
   }
 
   lobbyDraftsList.innerHTML = data.map(d => `
-    <div class="lobby-item" onclick="joinDraft('${d.id}')">
-      <div>
+    <div class="lobby-item">
+      <div onclick="joinDraft('${d.id}')" style="cursor:pointer;flex:1">
         <div class="lobby-item-title">${d.name} (${d.season_year})</div>
         <div class="lobby-item-meta">Status: ${d.status.toUpperCase()} &middot; Host: ${d.dd_users?.display_name || 'Unknown'}</div>
       </div>
-      <button class="btn btn-ghost btn-sm">Join →</button>
+      <div class="lobby-item-actions">
+        ${d.status === 'active'
+          ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); toggleDraftActive('${d.id}', false)">Deactivate</button>`
+          : d.status !== 'completed'
+            ? `<button class="btn btn-ghost btn-sm" onclick="event.stopPropagation(); toggleDraftActive('${d.id}', true)">Activate</button>`
+            : ''
+        }
+        <button class="btn btn-ghost btn-sm" onclick="joinDraft('${d.id}')">Enter →</button>
+      </div>
     </div>
   `).join('')
 }
@@ -180,6 +279,18 @@ btnCreateDraft.addEventListener('click', async () => {
   if (error) alert('Error creating draft: ' + error.message)
   else joinDraft(data.id)
 })
+
+window.toggleDraftActive = async (draftId, activate) => {
+  if (activate) {
+    // Deactivate any currently active draft first
+    await supabase.from('dd_drafts').update({ status: 'setup' }).eq('status', 'active')
+    // Activate this one
+    await supabase.from('dd_drafts').update({ status: 'active' }).eq('id', draftId)
+  } else {
+    await supabase.from('dd_drafts').update({ status: 'setup' }).eq('id', draftId)
+  }
+  loadLobby()
+}
 
 window.joinDraft = async (draftId) => {
   if (realtimeChannel) {
@@ -382,7 +493,8 @@ btnSaveParticipants.addEventListener('click', async () => {
 // ─── PHASE 3: DRAFT BOARD ──────────────────────────────────────────
 async function startDraftBoard() {
   showPhase('draft')
-  
+  btnBack3.classList.toggle('hidden', !isAdmin)
+
   // Populate month filter
   const months = [...new Set(games.map(g => new Date(g.game_date).toLocaleString('default', { month: 'long' })))]
   filterMonth.innerHTML = '<option value="">All Months</option>' + months.map(m => `<option value="${m}">${m}</option>`).join('')
@@ -491,8 +603,11 @@ function renderPickBanner() {
   pickDrafter.textContent = picker ? picker.display_name : 'Unknown'
   
   if (document.getElementById('pick-instruction')) {
-    document.getElementById('pick-instruction').textContent = 
-      (picker?.user_id === currentUser?.id) ? 'It is your turn! Select a game.' : "Select a game from the left panel when it's your turn"
+    const isMyTurn = isAdmin
+      ? (picker?.user_id === currentUser?.id)
+      : (picker?.display_name === claimedName)
+    document.getElementById('pick-instruction').textContent =
+      isMyTurn ? 'It is your turn! Select a game.' : "Select a game from the left panel when it's your turn"
   }
 }
 
@@ -619,8 +734,9 @@ window.makePick = async (gameId) => {
   }
 }
 
-// Global scope undo (only owner can do this realistically, but leaving open for now)
+// Undo (admin only)
 document.addEventListener('keydown', async (e) => {
+  if (!isAdmin) return
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
     e.preventDefault()
     if (pickLog.length === 0) return
@@ -637,8 +753,12 @@ document.addEventListener('keydown', async (e) => {
 document.getElementById('btn-export')?.addEventListener('click', () => alert('Copy via clipboard temporarily disabled in simple mode.'))
 
 btnBack3.addEventListener('click', () => {
-  if (realtimeChannel) realtimeChannel.unsubscribe()
-  showPhase('lobby')
+  if (realtimeChannel) { realtimeChannel.unsubscribe(); realtimeChannel = null }
+  if (isAdmin) {
+    showPhase('lobby')
+  } else {
+    showClaimScreen()
+  }
 })
 
 // Boot

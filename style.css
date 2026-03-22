@@ -888,6 +888,43 @@ body {
   justify-content: center;
 }
 
+/* ── Claim Grid (visitor name selection) ─────────────── */
+.claim-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+
+.claim-card {
+  padding: 16px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.claim-card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--dodger-light);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 16px var(--dodger-glow);
+}
+
+.claim-name {
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+/* ── Lobby item with actions ─────────────────────────── */
+.lobby-item-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 /* ── Color palette for participants ──────────────────── */
 .color-0  { --pcolor: #3b82f6; }
 .color-1  { --pcolor: #ef4444; }
