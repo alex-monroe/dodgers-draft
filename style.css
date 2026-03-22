@@ -630,8 +630,20 @@ body {
 }
 
 .game-item.not-my-turn {
-  opacity: 0.5;
-  pointer-events: none;
+  opacity: 0.6;
+}
+
+.game-item.not-my-turn:hover {
+  border-color: var(--warning);
+}
+
+.game-item.queued {
+  border-left: 3px solid var(--accent) !important;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.game-item.queued.not-my-turn {
+  opacity: 1;
 }
 
 .game-info {
@@ -666,6 +678,115 @@ body {
   background: var(--dodger-light);
   border-color: var(--dodger-light);
   box-shadow: 0 0 6px var(--dodger-glow);
+}
+
+/* ── Queue Badge (on game items) ──────────────────────── */
+.queue-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 5px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 0.65rem;
+  font-weight: 700;
+  margin-right: 4px;
+}
+
+/* ── Queue Section ───────────────────────────────────── */
+.queue-section {
+  flex-shrink: 0;
+  margin-bottom: 12px;
+}
+
+.queue-section h3 {
+  font-size: 0.85rem;
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: var(--accent);
+}
+
+.queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.queue-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.queue-list::-webkit-scrollbar-thumb {
+  background: var(--surface-2);
+  border-radius: 2px;
+}
+
+.queue-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  transition: all var(--transition);
+}
+
+.queue-item.can-pick .queue-game-info {
+  cursor: pointer;
+}
+
+.queue-item.can-pick:hover {
+  border-color: var(--dodger-light);
+  background: rgba(30, 144, 255, 0.1);
+}
+
+.queue-pos {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 0.72rem;
+  min-width: 18px;
+}
+
+.queue-game-info {
+  flex: 1;
+}
+
+.queue-game-date {
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.queue-game-opp {
+  font-weight: 600;
+  font-size: 0.82rem;
+}
+
+.queue-remove {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.7rem;
+  padding: 2px 5px;
+  border-radius: 4px;
+  opacity: 0;
+  transition: opacity var(--transition), color var(--transition);
+}
+
+.queue-item:hover .queue-remove {
+  opacity: 1;
+}
+
+.queue-remove:hover {
+  color: var(--danger);
+  background: rgba(239, 68, 68, 0.12);
 }
 
 /* ── Pick Banner ──────────────────────────────────────── */
