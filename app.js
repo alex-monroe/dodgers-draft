@@ -9,6 +9,7 @@ let pickLog = []      // Array of { id, pick_number, participant_id, game_id }
 let realtimeChannel = null
 let isAdmin = false
 let claimedName = null // display_name from localStorage for visitors
+let pickQueue = []     // Array of game IDs queued for future picks
 
 // ─── DOM ELEMENTS ──────────────────────────────────────────────────
 const phases = {
@@ -152,6 +153,7 @@ async function loadVisitorView() {
     headerUser.classList.remove('hidden')
     userDisplayName.textContent = claimedName
     btnLogout.textContent = 'Change'
+    loadQueue()
     startDraftBoard()
   } else {
     showClaimScreen()
@@ -179,6 +181,7 @@ window.claimParticipant = (name) => {
   headerUser.classList.remove('hidden')
   userDisplayName.textContent = name
   btnLogout.textContent = 'Change'
+  loadQueue()
   startDraftBoard()
 }
 
@@ -505,6 +508,7 @@ async function startDraftBoard() {
       uniqueNames.map(name => `<option value="${name}" ${name === claimedName ? 'selected' : ''}>${name}</option>`).join('')
     adminPlayAs.onchange = () => {
       claimedName = adminPlayAs.value || null
+      loadQueue()
       updateBoard()
     }
   } else {
@@ -539,10 +543,12 @@ async function startDraftBoard() {
 }
 
 function updateBoard() {
+  pruneQueue()
   renderGames()
   renderOrderList()
   renderDraftLog()
   renderPickBanner()
+  renderQueue()
 }
 
 // Data Helpers
@@ -584,11 +590,13 @@ function renderGames() {
     const dt = new Date(g.game_date)
     const formatDt = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })
     const picksCount = getGamePickStats(g.id)
+    const isQueued = pickQueue.includes(g.id)
 
     let stateClass = ''
     if (picksCount === 1) stateClass = 'taken-1'
     if (picksCount >= 2) stateClass = 'taken-2'
     if (!canPick && picksCount < 2) stateClass += ' not-my-turn'
+    if (isQueued) stateClass += ' queued'
 
     return `
       <div class="game-item ${stateClass}" onclick="makePick('${g.id}')">
@@ -597,6 +605,7 @@ function renderGames() {
           <div class="game-opp">vs ${g.opponent}</div>
         </div>
         <div class="game-slots">
+          ${isQueued ? `<div class="queue-badge">Q${pickQueue.indexOf(g.id) + 1}</div>` : ''}
           <div class="slot-dot ${picksCount >= 1 ? 'filled' : ''}"></div>
           <div class="slot-dot ${picksCount >= 2 ? 'filled' : ''}"></div>
         </div>
@@ -628,7 +637,7 @@ function renderPickBanner() {
       ? (picker?.display_name === claimedName)
       : false
     document.getElementById('pick-instruction').textContent =
-      isMyTurn ? 'It is your turn! Select a game.' : "Select a game from the left panel when it's your turn"
+      isMyTurn ? 'It is your turn! Select a game.' : 'Click games to add them to your queue'
   }
 }
 
@@ -721,6 +730,76 @@ function renderFinalResults() {
   `).join('')
 }
 
+// ─── QUEUE ──────────────────────────────────────────────────────────
+function getQueueKey() {
+  if (!currentDraft || !claimedName) return null
+  return `dodgers-draft-queue-${currentDraft.id}-${claimedName}`
+}
+
+function loadQueue() {
+  const key = getQueueKey()
+  if (!key) { pickQueue = []; return }
+  try {
+    pickQueue = JSON.parse(localStorage.getItem(key)) || []
+  } catch { pickQueue = [] }
+}
+
+function saveQueue() {
+  const key = getQueueKey()
+  if (!key) return
+  localStorage.setItem(key, JSON.stringify(pickQueue))
+}
+
+function pruneQueue() {
+  const before = pickQueue.length
+  pickQueue = pickQueue.filter(gId => getGamePickStats(gId) < 2)
+  if (pickQueue.length !== before) saveQueue()
+}
+
+window.toggleQueue = (gameId) => {
+  const idx = pickQueue.indexOf(gameId)
+  if (idx >= 0) {
+    pickQueue.splice(idx, 1)
+  } else {
+    pickQueue.push(gameId)
+  }
+  saveQueue()
+  updateBoard()
+}
+
+function renderQueue() {
+  const queueEl = document.getElementById('queue-section')
+  if (!queueEl) return
+
+  if (!claimedName || pickQueue.length === 0) {
+    queueEl.classList.add('hidden')
+    return
+  }
+
+  queueEl.classList.remove('hidden')
+  const queueList = document.getElementById('queue-list')
+
+  const currentPicker = getPickerAtOverall(pickLog.length + 1)
+  const isMyTurn = !isDraftOver() && (isAdmin || currentPicker?.display_name === claimedName)
+
+  queueList.innerHTML = pickQueue.map((gId, i) => {
+    const g = games.find(g => g.id === gId)
+    if (!g) return ''
+    const dt = new Date(g.game_date)
+    const formatDt = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' })
+    return `
+      <div class="queue-item ${isMyTurn ? 'can-pick' : ''}">
+        <div class="queue-pos">${i + 1}</div>
+        <div class="queue-game-info" ${isMyTurn ? `onclick="makePick('${g.id}')"` : ''}>
+          <div class="queue-game-date">${formatDt}</div>
+          <div class="queue-game-opp">vs ${g.opponent}</div>
+        </div>
+        <button class="queue-remove" onclick="event.stopPropagation(); toggleQueue('${g.id}')" title="Remove from queue">&#10005;</button>
+      </div>
+    `
+  }).join('')
+}
+
 // ─── ACTIONS ───────────────────────────────────────────────────────
 let pickInFlight = false
 window.makePick = async (gameId) => {
@@ -731,8 +810,11 @@ window.makePick = async (gameId) => {
   const overallPickNum = pickLog.length + 1
   const picker = getPickerAtOverall(overallPickNum)
 
-  // Only the current picker (or admin) can make a pick
-  if (!isAdmin && picker?.display_name !== claimedName) return
+  // Only the current picker (or admin) can make a pick — otherwise toggle queue
+  if (!isAdmin && picker?.display_name !== claimedName) {
+    if (claimedName) toggleQueue(gameId)
+    return
+  }
 
   pickInFlight = true
   const { data, error } = await supabase.from('dd_draft_picks').insert({
@@ -747,6 +829,10 @@ window.makePick = async (gameId) => {
     alert('Pick failed: ' + error.message)
     return
   }
+
+  // Remove picked game from queue
+  const qIdx = pickQueue.indexOf(gameId)
+  if (qIdx >= 0) { pickQueue.splice(qIdx, 1); saveQueue() }
 
   // Add from response if realtime hasn't already
   if (!pickLog.find(p => p.id === data.id)) {
